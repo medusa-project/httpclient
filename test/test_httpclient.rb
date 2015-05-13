@@ -704,6 +704,15 @@ EOS
     assert_equal('custom2, custom4', @client.get('/servlet', :header => [['x-header', 'custom4']]).headers['X-Header'])
   end
 
+  def test_get_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.get(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.get(serverurl + 'error')
+    end
+  end
+
   def test_head_follow_redirect
     expected = urify(serverurl + 'hello')
     assert_equal(expected, @client.head(serverurl + 'hello', :follow_redirect => true).header.request_uri)
@@ -817,12 +826,23 @@ EOS
     assert_equal(param, params(res.header["x-query"][0]))
   end
 
+  def test_post_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.post(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.post(serverurl + 'error')
+    end
+  end
+
   def test_post_empty
     @client.debug_dev = str = ''
-    # nil body means 'no content' that is allowed but WEBrick cannot handle it.
-    @client.post(serverurl + 'servlet', :body => nil)
-    # request does not have 'Content-Type'
-    assert_equal(1, str.scan(/content-type/i).size)
+    assert_raises(HTTPClient::BadResponseError) do
+      # nil body means 'no content' that is allowed but WEBrick cannot handle it.
+      @client.post(serverurl + 'servlet', :body => nil)
+      # request does not have 'Content-Type'
+      assert_equal(1, str.scan(/content-type/i).size)
+    end
   end
 
   def test_post_with_query
@@ -1044,6 +1064,15 @@ EOS
     assert_equal('Content-Type: application/x-www-form-urlencoded', str.split(/\r?\n/)[5])
   end
 
+  def test_patch_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.patch(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.patch(serverurl + 'error')
+    end
+  end
+
   def test_patch_with_query_and_body
     res = @client.patch(serverurl + 'servlet', :query => {:query => 'query'}, :body => {:body => 'body'})
     assert_equal("patch", res.content)
@@ -1074,6 +1103,12 @@ EOS
     assert_equal('Content-Type: application/x-www-form-urlencoded', str.split(/\r?\n/)[5])
   end
 
+  def test_put_4xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.put(serverurl + 'notfound')
+    end
+  end
+
   def test_put_with_query_and_body
     res = @client.put(serverurl + 'servlet', :query => {:query => 'query'}, :body => {:body => 'body'})
     assert_equal("put", res.content)
@@ -1097,6 +1132,15 @@ EOS
 
   def test_delete
     assert_equal("delete", @client.delete(serverurl + 'servlet').content)
+  end
+
+  def test_delete_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.delete(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.delete(serverurl + 'error')
+    end
   end
 
   def test_delete_with_query
@@ -1131,6 +1175,15 @@ EOS
     assert_equal('options', @client.options(serverurl + 'servlet').content)
   end
 
+  def test_options_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.options(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.trace(serverurl + 'error')
+    end
+  end
+
   def test_options_with_header
     res = @client.options(serverurl + 'servlet', {'x-header' => 'header'})
     assert_equal('header', res.headers['X-Header'])
@@ -1158,6 +1211,15 @@ EOS
     assert_equal("propfind", @client.propfind(serverurl + 'servlet').content)
   end
 
+  def test_propfind_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.propfind(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.propfind(serverurl + 'error')
+    end
+  end
+
   def test_propfind_async
     conn = @client.propfind_async(serverurl + 'servlet')
     Thread.pass while !conn.finished?
@@ -1171,6 +1233,15 @@ EOS
     res = @client.proppatch(serverurl + 'servlet', param)
     assert_equal('proppatch', res.content)
     assert_equal(param, params(res.header["x-query"][0]))
+  end
+
+  def test_proppatch_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.proppatch(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.proppatch(serverurl + 'error')
+    end
   end
 
   def test_proppatch_async
@@ -1187,6 +1258,15 @@ EOS
     param = {'1'=>'2', '3'=>'4'}
     res = @client.trace(serverurl + 'servlet', param)
     assert_equal(param, params(res.header["x-query"][0]))
+  end
+
+  def test_trace_4xx_5xx_raises_error
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.trace(serverurl + 'notfound')
+    end
+    assert_raises(HTTPClient::BadResponseError) do
+      @client.trace(serverurl + 'error')
+    end
   end
 
   def test_trace_async
@@ -1862,7 +1942,7 @@ private
     [
       :hello, :sleep, :servlet_redirect, :redirect1, :redirect2, :redirect3,
       :redirect_self, :relative_redirect, :redirect_see_other, :chunked,
-      :largebody, :status, :compressed, :charset, :continue
+      :largebody, :status, :compressed, :charset, :continue, :error
     ].each do |sym|
       @server.mount(
         "/#{sym}",
@@ -1977,6 +2057,10 @@ private
   def do_continue(req, res)
     req.continue
     res.body = 'done!'
+  end
+
+  def do_error(req, res)
+    res.status = WEBrick::HTTPStatus::InternalServerError
   end
 
   class TestServlet < WEBrick::HTTPServlet::AbstractServlet
