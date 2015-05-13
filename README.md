@@ -7,6 +7,8 @@ Ruby.  'httpclient' formerly known as 'http-access2'.
 
 See [HTTPClient](http://www.rubydoc.info/gems/httpclient/frames) for documentation.
 
+This fork raises `HTTPClient::BadResponseError` for responses with a status of
+400 or greater.
 
 ## Features
 
