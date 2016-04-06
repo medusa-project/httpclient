@@ -1,5 +1,5 @@
 # HTTPClient - HTTP client library.
-# Copyright (C) 2000-2009  NAKAMURA, Hiroshi  <nahi@ruby-lang.org>.
+# Copyright (C) 2000-2015  NAKAMURA, Hiroshi  <nahi@ruby-lang.org>.
 #
 # This program is copyrighted free software by NAKAMURA, Hiroshi.  You can
 # redistribute it and/or modify it under the same terms of Ruby's license;
@@ -20,19 +20,25 @@ class HTTPClient
   #
   # == Trust Anchor Control
   #
-  # SSLConfig loads 'httpclient/cacert.p7s' as a trust anchor
+  # SSLConfig loads 'httpclient/cacert.pem' as a trust anchor
   # (trusted certificate(s)) with add_trust_ca in initialization time.
   # This means that HTTPClient instance trusts some CA certificates by default,
-  # like Web browsers.  'httpclient/cacert.p7s' is created by the author and
-  # included in released package.
+  # like Web browsers.  'httpclient/cacert.pem' is downloaded from curl web
+  # site by the author and included in released package.
   #
-  # 'cacert.p7s' is automatically generated from JDK 1.6.  Regardless its
-  # filename extension (p7s), HTTPClient doesn't verify the signature in it.
+  # On JRuby, HTTPClient uses Java runtime's trusted CA certificates, not
+  # cacert.pem by default. You can load cacert.pem by calling
+  # SSLConfig#load_trust_ca manually like:
+  #
+  #   HTTPClient.new { self.ssl_config.load_trust_ca }.get("https://...")
   #
   # You may want to change trust anchor by yourself.  Call clear_cert_store
   # then add_trust_ca for that purpose.
   class SSLConfig
+    include HTTPClient::Util
     include OpenSSL if SSLEnabled
+
+    CIPHERS_DEFAULT = "ALL:!aNULL:!eNULL:!SSLv2" # OpenSSL >1.0.0 default
 
     # Which TLS protocol version (also called method) will be used. Defaults
     # to :auto which means that OpenSSL decides (In my tests this resulted 
@@ -42,18 +48,20 @@ class HTTPClient
     # See {OpenSSL::SSL::SSLContext::METHODS} for a list of available versions
     # in your specific Ruby environment.
     attr_reader :ssl_version
-    # OpenSSL::X509::Certificate:: certificate for SSL client authenticateion.
-    # nil by default. (no client authenticateion)
+    # OpenSSL::X509::Certificate:: certificate for SSL client authentication.
+    # nil by default. (no client authentication)
     attr_reader :client_cert
     # OpenSSL::PKey::PKey:: private key for SSL client authentication.
-    # nil by default. (no client authenticateion)
+    # nil by default. (no client authentication)
     attr_reader :client_key
+    attr_reader :client_key_pass
 
     # A number which represents OpenSSL's verify mode.  Default value is
     # OpenSSL::SSL::VERIFY_PEER | OpenSSL::SSL::VERIFY_FAIL_IF_NO_PEER_CERT.
     attr_reader :verify_mode
     # A number of verify depth.  Certification path which length is longer than
     # this depth is not allowed.
+    # CAUTION: this is OpenSSL specific option and ignored on JRuby.
     attr_reader :verify_depth
     # A callback handler for custom certificate verification.  nil by default.
     # If the handler is set, handler.call is invoked just after general
@@ -65,6 +73,8 @@ class HTTPClient
     attr_reader :timeout
     # A number of OpenSSL's SSL options.  Default value is
     # OpenSSL::SSL::OP_ALL | OpenSSL::SSL::OP_NO_SSLv2
+    # CAUTION: this is OpenSSL specific option and ignored on JRuby.
+    # Use ssl_version to specify the TLS version you want to use.
     attr_reader :options
     # A String of OpenSSL's cipher configuration.  Default value is
     # ALL:!ADH:!LOW:!EXP:!MD5:+SSLv2:@STRENGTH
@@ -78,11 +88,17 @@ class HTTPClient
     # For server side configuration.  Ignore this.
     attr_reader :client_ca # :nodoc:
 
+    # These array keeps original files/dirs that was added to @cert_store
+    attr_reader :cert_store_items
+    attr_reader :cert_store_crl_items
+
     # Creates a SSLConfig.
     def initialize(client)
       return unless SSLEnabled
       @client = client
       @cert_store = X509::Store.new
+      @cert_store_items = [:default]
+      @cert_store_crl_items = []
       @client_cert = @client_key = @client_ca = nil
       @verify_mode = SSL::VERIFY_PEER | SSL::VERIFY_FAIL_IF_NO_PEER_CERT
       @verify_depth = nil
@@ -97,7 +113,7 @@ class HTTPClient
       @options |= OpenSSL::SSL::OP_NO_SSLv2 if defined?(OpenSSL::SSL::OP_NO_SSLv2)
       @options |= OpenSSL::SSL::OP_NO_SSLv3 if defined?(OpenSSL::SSL::OP_NO_SSLv3)
       # OpenSSL 0.9.8 default: "ALL:!ADH:!LOW:!EXP:!MD5:+SSLv2:@STRENGTH"
-      @ciphers = "ALL:!aNULL:!eNULL:!SSLv2" # OpenSSL >1.0.0 default
+      @ciphers = CIPHERS_DEFAULT
       @cacerts_loaded = false
     end
 
@@ -135,8 +151,7 @@ class HTTPClient
     #
     # Calling this method resets all existing sessions.
     def set_client_cert_file(cert_file, key_file, pass = nil)
-      @client_cert = X509::Certificate.new(File.open(cert_file) { |f| f.read })
-      @client_key = PKey::RSA.new(File.open(key_file) { |f| f.read }, pass)
+      @client_cert, @client_key, @client_key_pass = cert_file, key_file, pass
       change_notify
     end
 
@@ -155,6 +170,7 @@ class HTTPClient
       @cacerts_loaded = true # avoid lazy override
       @cert_store = X509::Store.new
       @cert_store.set_default_paths
+      @cert_store_items = [ENV['SSL_CERT_FILE'] || :default]
       change_notify
     end
 
@@ -165,6 +181,7 @@ class HTTPClient
     def clear_cert_store
       @cacerts_loaded = true # avoid lazy override
       @cert_store = X509::Store.new
+      @cert_store_items.clear
       change_notify
     end
 
@@ -175,6 +192,7 @@ class HTTPClient
     def cert_store=(cert_store)
       @cacerts_loaded = true # avoid lazy override
       @cert_store = cert_store
+      @cert_store_items.clear
       change_notify
     end
 
@@ -188,6 +206,7 @@ class HTTPClient
     def add_trust_ca(trust_ca_file_or_hashed_dir)
       @cacerts_loaded = true # avoid lazy override
       add_trust_ca_to_store(@cert_store, trust_ca_file_or_hashed_dir)
+      @cert_store_items << trust_ca_file_or_hashed_dir
       change_notify
     end
     alias set_trust_ca add_trust_ca
@@ -211,12 +230,20 @@ class HTTPClient
     # crl:: a OpenSSL::X509::CRL or a filename of a PEM/DER formatted
     #       OpenSSL::X509::CRL.
     #
+    # On JRuby, instead of setting CRL by yourself you can set following
+    # options to let HTTPClient to perform revocation check with CRL and OCSP:
+    # -J-Dcom.sun.security.enableCRLDP=true -J-Dcom.sun.net.ssl.checkRevocation=true
+    # ex. jruby -J-Dcom.sun.security.enableCRLDP=true -J-Dcom.sun.net.ssl.checkRevocation=true app.rb
+    #
+    # Revoked cert example: https://test-sspev.verisign.com:2443/test-SSPEV-revoked-verisign.html
+    #
     # Calling this method resets all existing sessions.
     def add_crl(crl)
       unless crl.is_a?(X509::CRL)
         crl = X509::CRL.new(File.open(crl) { |f| f.read })
       end
       @cert_store.add_crl(crl)
+      @cert_store_crl_items << crl
       @cert_store.flags = X509::V_FLAG_CRL_CHECK | X509::V_FLAG_CRL_CHECK_ALL
       change_notify
     end
@@ -278,7 +305,7 @@ class HTTPClient
       change_notify
     end
 
-    # interfaces for SSLSocketWrap.
+    # interfaces for SSLSocket.
     def set_context(ctx) # :nodoc:
       load_trust_ca unless @cacerts_loaded
       @cacerts_loaded = true
@@ -288,8 +315,14 @@ class HTTPClient
       ctx.verify_depth = @verify_depth if @verify_depth
       ctx.verify_callback = @verify_callback || method(:default_verify_callback)
       # SSL config
-      ctx.cert = @client_cert
-      ctx.key = @client_key
+      if @client_cert
+        ctx.cert = @client_cert.is_a?(X509::Certificate) ?  @client_cert :
+          X509::Certificate.new(File.open(@client_cert) { |f| f.read })
+      end
+      if @client_key
+        ctx.key = @client_key.is_a?(PKey::PKey) ? @client_key :
+          PKey::RSA.new(File.open(@client_key) { |f| f.read }, @client_key_pass)
+      end
       ctx.client_ca = @client_ca
       ctx.timeout = @timeout
       ctx.options = @options
@@ -405,9 +438,24 @@ class HTTPClient
       nil
     end
 
+    # Use 2014 bit certs trust anchor if possible.
+    # CVE-2015-1793 requires: OpenSSL >= 1.0.2d or OpenSSL >= 1.0.1p
+    # OpenSSL before 1.0.1 does not have CVE-2015-1793 problem
     def load_cacerts(cert_store)
-      file = File.join(File.dirname(__FILE__), 'cacert.p7s')
-      add_trust_ca_to_store(cert_store, file)
+      ver = OpenSSL::OPENSSL_VERSION
+      if (ver.start_with?('OpenSSL 1.0.1') && ver >= 'OpenSSL 1.0.1p') ||
+          (ver.start_with?('OpenSSL ') && ver >= 'OpenSSL 1.0.2d') || defined?(JRuby)
+        filename = 'cacert.pem'
+      else
+        warning("RSA 1024 bit CA certificates are loaded due to old openssl compatibility")
+        filename = 'cacert1024.pem'
+      end
+      file = File.join(File.dirname(__FILE__), filename)
+      unless defined?(JRuby)
+        # JRuby uses @cert_store_items
+        add_trust_ca_to_store(cert_store, file)
+      end
+      @cert_store_items << file
     end
   end
 

@@ -115,6 +115,14 @@ class TestHTTPClient < Test::Unit::TestCase
     assert_equal("Accept: text/html", lines[4])
   end
 
+  def test_header_symbol
+    str = ""
+    @client.debug_dev = str
+    @client.post(serverurl + 'servlet', :header => {:'Content-Type' => 'application/json'}, :body => 'hello')
+    lines = str.split(/(?:\r?\n)+/).grep(/^Content-Type/)
+    assert_equal(2, lines.size) # 1 for both request and response
+  end
+
   def test_host_given
     str = ""
     @client.debug_dev = str
@@ -138,7 +146,7 @@ class TestHTTPClient < Test::Unit::TestCase
 
   def test_redirect_returns_not_modified
     assert_nothing_raised do
-      timeout(2) do
+      ::Timeout.timeout(2) do
         @client.get(serverurl + 'status', {:status => 306}, {:follow_redirect => true})
       end
     end
@@ -531,7 +539,7 @@ EOS
 
   def test_no_content
     assert_nothing_raised do
-      timeout(2) do
+      ::Timeout.timeout(2) do
         @client.get(serverurl + 'status', :status => 101)
         @client.get(serverurl + 'status', :status => 204)
         @client.get(serverurl + 'status', :status => 304)
@@ -568,7 +576,7 @@ EOS
   end
 
   def test_get_content_with_base_url
-    @client = HTTPClient.new(:base_url => serverurl[0..-1])
+    @client = HTTPClient.new(:base_url => serverurl)
     assert_equal('hello', @client.get_content('/hello'))
     assert_equal('hello', @client.get_content('/redirect1'))
     assert_equal('hello', @client.get_content('/redirect2'))
@@ -679,14 +687,14 @@ EOS
   end
 
   def test_get_with_base_url
-    @client = HTTPClient.new(:base_url => serverurl[0..-1])
+    @client = HTTPClient.new(:base_url => serverurl)
     assert_equal("get", @client.get('/servlet').content)
     param = {'1'=>'2', '3'=>'4'}
     res = @client.get('/servlet', param)
     assert_equal(param, params(res.header["x-query"][0]))
     assert_nil(res.contenttype)
     #
-    @client.base_url = serverurl[0..-1] + '/servlet'
+    @client.base_url = serverurl[0...-1] + '/servlet'
     url = '?5=6&7=8'
     res = @client.get(url, param)
     assert_equal(param.merge("5"=>"6", "7"=>"8"), params(res.header["x-query"][0]))
@@ -694,7 +702,7 @@ EOS
   end
 
   def test_get_with_default_header
-    @client = HTTPClient.new(:base_url => serverurl[0..-1], :default_header => {'x-header' => 'custom'})
+    @client = HTTPClient.new(:base_url => serverurl, :default_header => {'x-header' => 'custom'})
     assert_equal('custom', @client.get('/servlet').headers['X-Header'])
     @client.default_header = {'x-header' => 'custom2'}
     assert_equal('custom2', @client.get('/servlet').headers['X-Header'])
@@ -779,8 +787,8 @@ EOS
 
   def test_get_with_block_arity_2
     called = false
-    res = @client.get(serverurl + 'servlet') { |res, str|
-      assert_equal(200, res.status)
+    res = @client.get(serverurl + 'servlet') { |blk_res, str|
+      assert_equal(200, blk_res.status)
       assert_equal('get', str)
       called = true
     }
@@ -792,7 +800,7 @@ EOS
   def test_get_with_block_string_recycle
     @client.read_block_size = 2
     body = []
-    res = @client.get(serverurl + 'servlet') { |str|
+    _res = @client.get(serverurl + 'servlet') { |str|
       body << str
     }
     assert_equal(2, body.size)
@@ -809,7 +817,7 @@ EOS
     url = "http://localhost:#{server.addr[1]}/"
     body = []
     begin
-      res = @client.get(url + 'chunked') { |str|
+      _res = @client.get(url + 'chunked') { |str|
         body << str
       }
     ensure
@@ -975,7 +983,7 @@ EOS
       1
     end
     @client.debug_dev = str = StringIO.new
-    res = @client.post(serverurl + 'servlet', { :file => myio })
+    _res = @client.post(serverurl + 'servlet', { :file => myio })
     assert_match(/\r\n4\r\n/, str.string, 'should send "4" not "45"')
   end
 
@@ -992,7 +1000,7 @@ EOS
       end
     end
     @client.debug_dev = str = StringIO.new
-    res = @client.post(serverurl + 'servlet', { :file1 => myio1, :file2 => myio2 })
+    _res = @client.post(serverurl + 'servlet', { :file1 => myio1, :file2 => myio2 })
     assert_match(/\r\n45\r\n/, str.string)
   end
 
@@ -1353,7 +1361,7 @@ EOS
 
   def test_http_custom_date_header
     @client.debug_dev = (str = "")
-    res = @client.get(serverurl + 'hello', :header => {'Date' => 'foo'})
+    _res = @client.get(serverurl + 'hello', :header => {'Date' => 'foo'})
     lines = str.split(/(?:\r?\n)+/)
     assert_equal('Date: foo', lines[4])
   end
@@ -1951,14 +1959,6 @@ private
     end
     @server.mount('/servlet', TestServlet.new(@server))
     @server_thread = start_server_thread(@server)
-  end
-
-  def escape_noproxy
-    backup = HTTPClient::NO_PROXY_HOSTS.dup
-    HTTPClient::NO_PROXY_HOSTS.clear
-    yield
-  ensure
-    HTTPClient::NO_PROXY_HOSTS.replace(backup)
   end
 
   def add_query_string(req)

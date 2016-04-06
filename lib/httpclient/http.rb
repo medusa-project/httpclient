@@ -1,7 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 # HTTPClient - HTTP client library.
-# Copyright (C) 2000-2009  NAKAMURA, Hiroshi  <nahi@ruby-lang.org>.
+# Copyright (C) 2000-2015  NAKAMURA, Hiroshi  <nahi@ruby-lang.org>.
 #
 # This program is copyrighted free software by NAKAMURA, Hiroshi.  You can
 # redistribute it and/or modify it under the same terms of Ruby's license;
@@ -12,6 +12,7 @@ require 'time'
 if defined?(Encoding::ASCII_8BIT)
   require 'open-uri' # for encoding
 end
+require 'httpclient/util'
 
 
 # A namespace module for HTTP Message definitions used by HTTPClient.
@@ -95,6 +96,7 @@ module HTTP
   #     p res.header['last-modified'].first
   #
   class Message
+    include HTTPClient::Util
 
     CRLF = "\r\n"
 
@@ -980,12 +982,12 @@ module HTTP
 
     VERSION_WARNING = 'Message#version (Float) is deprecated. Use Message#http_version (String) instead.'
     def version
-      warn(VERSION_WARNING)
+      warning(VERSION_WARNING)
       @http_header.http_version.to_f
     end
 
     def version=(version)
-      warn(VERSION_WARNING)
+      warning(VERSION_WARNING)
       @http_header.http_version = version
     end
 
